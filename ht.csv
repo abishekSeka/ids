@@ -1,0 +1,6 @@
+duration,protocol_type,service,flag,src_bytes,dst_bytes,attack_type
+0,tcp,http,SF,181,5450,benign
+0,udp,domain,SF,105,146,benign
+0,tcp,ftp,REJ,100,0,malicious
+0,tcp,http,SF,153,6320,benign
+0,tcp,smtp,REJ,70,0,malicious
