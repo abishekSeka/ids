@@ -1,80 +1,170 @@
-import argparse
+# Required libraries
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import joblib
+import os
+import streamlit as st
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.svm import SVC
-from sklearn.metrics import classification_report, accuracy_score
-import joblib
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, roc_curve, auc
+import logging
 
-# Preprocessing the datasetcd
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+
+# Constants
+USER_DATA_FILE = "users.txt"
+
+# Load dataset
 def load_data(file_path):
-    data = pd.read_csv('ht.csv')
-    X = data.iloc[:, :-1]  # Features
-    y = data.iloc[:, -1]   # Labels (Malicious/Benign)
-    return X, y
-
-# Train the model
-def train_model(X, y, model_type="random_forest"):
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
-    
-    if model_type == "random_forest":
-        model = RandomForestClassifier(n_estimators=100)
-    elif model_type == "decision_tree":
-        model = DecisionTreeClassifier()
-    elif model_type == "svm":
-        model = SVC(kernel='linear')
-    else:
-        raise ValueError("Unsupported model type. Choose from 'random_forest', 'decision_tree', or 'svm'")
-    
-    model.fit(X_train, y_train)
-    predictions = model.predict(X_test)
-    
-    print(f"Model: {model_type}")
-    print(f"Accuracy: {accuracy_score(y_test, predictions)}")
-    print("Classification Report:\n", classification_report(y_test, predictions))
-    
-    return model
+    """Load dataset from a CSV file."""
+    try:
+        data = pd.read_csv(file_path)
+        return data
+    except Exception as e:
+        logging.error(f"Error loading data: {e}")
+        st.error(f"Error loading data: {e}")
+        return None
 
 # Save the trained model
-def save_model(model, output_file):
-    joblib.dump(model, output_file)
-    print(f"Model saved as {output_file}")
+def save_model(model, filename):
+    """Save the trained model to a file."""
+    joblib.dump(model, filename)
 
-# Load the saved model and classify new data
-def detect_intrusion(model_file, test_data_file):
-    model = joblib.load(model_file)
-    X_test = pd.read_csv(test_data_file)
-    predictions = model.predict(X_test)
-    print("Predictions: ", predictions)
+# Plot confusion matrix
+def plot_confusion_matrix(y_true, y_pred, model_name):
+    """Plot and save the confusion matrix."""
+    cm = confusion_matrix(y_true, y_pred)
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False,
+                xticklabels=['Benign', 'Malicious'], yticklabels=['Benign', 'Malicious'])
+    plt.title(f'Confusion Matrix: {model_name}')
+    plt.xlabel('Predicted')
+    plt.ylabel('Actual')
+    plt.tight_layout()
+    plt.savefig(f'confusion_matrix_{model_name}.png')
+    plt.close()
 
-# Main CLI handler
+# Plot ROC curve
+def plot_roc_curve(y_true, y_prob, model_name):
+    """Plot and save the ROC curve."""
+    fpr, tpr, _ = roc_curve(y_true, y_prob)
+    roc_auc = auc(fpr, tpr)
+    plt.figure(figsize=(8, 6))
+    plt.plot(fpr, tpr, color='blue', lw=2, label=f'ROC Curve (area = {roc_auc:.2f})')
+    plt.plot([0, 1], [0, 1], color='red', linestyle='--')
+    plt.title(f'ROC Curve: {model_name}')
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.legend(loc='lower right')
+    plt.tight_layout()
+    plt.savefig(f'roc_curve_{model_name}.png')
+    plt.close()
+
+# Train model based on selection
+def train_model(X, y, model_name):
+    """Train the model based on user's selection."""
+    models = {
+        "Random Forest": RandomForestClassifier(n_estimators=100, random_state=42),
+        "Decision Tree": DecisionTreeClassifier(random_state=42),
+        "SVM": SVC(probability=True, random_state=42)
+    }
+
+    model = models[model_name]
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    y_prob = model.predict_proba(X_test)[:, 1]  # Probability for ROC curve
+
+    accuracy = accuracy_score(y_test, y_pred)
+    report = classification_report(y_test, y_pred, output_dict=True)
+
+    return model, accuracy, report, y_pred, y_prob
+
+# User registration
+def register_user(username, password):
+    """Register a new user."""
+    if os.path.exists(USER_DATA_FILE):
+        with open(USER_DATA_FILE, "r") as file:
+            if any(user.split(":")[0] == username for user in file):
+                st.error("Username already exists. Please choose a different username.")
+                return False
+    
+    with open(USER_DATA_FILE, "a") as file:
+        file.write(f"{username}:{password}\n")
+    st.success("Registration successful!")
+    return True
+
+# User login
+def login_user(username, password):
+    """Log in an existing user."""
+    if not os.path.exists(USER_DATA_FILE):
+        st.error("No registered users found. Please register first.")
+        return False
+
+    with open(USER_DATA_FILE, "r") as file:
+        for line in file:
+            stored_username, stored_password = line.strip().split(":")
+            if stored_username == username and stored_password == password:
+                st.success("Login successful!")
+                return True
+    st.error("Login failed! Incorrect username or password.")
+    return False
+
+# Main Streamlit app function
 def main():
-    parser = argparse.ArgumentParser(description="Intrusion Detection System using Machine Learning")
-    
-    subparsers = parser.add_subparsers(dest="command")
-    
-    # Train model command
-    train_parser = subparsers.add_parser('train', help='Train the model')
-    train_parser.add_argument('dataset', type=str, help='Path to the dataset file')
-    train_parser.add_argument('--model', type=str, default="random_forest", choices=["random_forest", "decision_tree", "svm"], help="Model to train (default: random_forest)")
-    train_parser.add_argument('--output', type=str, default="model.joblib", help="Output file for saving the model")
-    
-    # Detect intrusion command
-    detect_parser = subparsers.add_parser('detect', help='Detect intrusion using saved model')
-    detect_parser.add_argument('model', type=str, help='Path to the saved model file')
-    detect_parser.add_argument('test_data', type=str, help='Path to the test data file')
+    """Main function to run the Streamlit app."""
+    st.title("Intrusion Detection System")
 
-    args = parser.parse_args()
-    
-    if args.command == "train":
-        X, y = load_data(args.dataset)
-        model = train_model(X, y, args.model)
-        save_model(model, args.output)
-    elif args.command == "detect":
-        detect_intrusion(args.model, args.test_data)
-    else:
-        parser.print_help()
+    # Sidebar for user authentication
+    st.sidebar.title("User Authentication")
+    action = st.sidebar.selectbox("Choose an option", ["Login", "Register"])
+    username = st.sidebar.text_input("Username:")
+    password = st.sidebar.text_input("Password:", type='password')
+
+    if st.sidebar.button(action):
+        if action == "Register":
+            register_user(username, password)
+        else:
+            if login_user(username, password):
+                st.session_state.logged_in = True
+
+    # Main functionality after login
+    if 'logged_in' in st.session_state and st.session_state.logged_in:
+        uploaded_file = st.file_uploader("Upload Dataset (CSV)", type='csv')
+        if uploaded_file is not None:
+            data = load_data(uploaded_file)
+            if data is not None:
+                st.write("Data Preview:", data.head())
+
+                model_name = st.selectbox("Select Model", ["Random Forest", "Decision Tree", "SVM"])
+                if st.button("Train Model"):
+                    if data.shape[1] < 2:
+                        st.error("Dataset must contain at least two columns (features and target).")
+                        return
+                    
+                    X = data.iloc[:, :-1]  # Features
+                    y = data.iloc[:, -1]   # Target
+
+                    if y.nunique() < 2:
+                        st.error("Target variable must have at least two classes.")
+                        return
+
+                    model, accuracy, report, predictions, probabilities = train_model(X, y, model_name)
+                    
+                    if model:
+                        save_model(model, 'model.joblib')
+                        st.write(f"Model Accuracy: {accuracy:.2f}")
+                        st.write("Classification Report:", report)
+
+                        plot_confusion_matrix(y, predictions, model_name)
+                        plot_roc_curve(y, probabilities, model_name)
+
+                        st.image(f'confusion_matrix_{model_name}.png', caption='Confusion Matrix')
+                        st.image(f'roc_curve_{model_name}.png', caption='ROC Curve')
 
 if __name__ == "__main__":
     main()
